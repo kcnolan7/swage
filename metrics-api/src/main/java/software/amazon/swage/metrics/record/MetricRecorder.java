@@ -15,8 +15,12 @@
 package software.amazon.swage.metrics.record;
 
 import java.time.Instant;
+import java.util.Optional;
+import java.util.Stack;
 
+import software.amazon.swage.collection.ImmutableTypedMap;
 import software.amazon.swage.collection.TypedMap;
+import software.amazon.swage.metrics.ContextData;
 import software.amazon.swage.metrics.Metric;
 import software.amazon.swage.metrics.MetricContext;
 import software.amazon.swage.metrics.Unit;
@@ -120,27 +124,7 @@ public abstract class MetricRecorder<R extends MetricRecorder.RecorderContext> {
      */
     public MetricContext context(TypedMap attributes) {
         R context = newRecorderContext(attributes);
-        return new MetricContext() {
-            @Override
-            public TypedMap attributes() {
-                return context.attributes();
-            }
-
-            @Override
-            public void record(Metric label, Number value, Unit unit, Instant time) {
-                MetricRecorder.this.record(label, value, unit, time, context);
-            }
-
-            @Override
-            public void count(Metric label, long delta) {
-                MetricRecorder.this.count(label, delta, context);
-            }
-
-            @Override
-            public void close() {
-                MetricRecorder.this.close(context);
-            }
-        };
+        return new DefaultMetricContext(context);
     }
 
     /**
@@ -220,5 +204,69 @@ public abstract class MetricRecorder<R extends MetricRecorder.RecorderContext> {
      * @param context The context being closed.
      */
     protected void close(R context) {
+    }
+
+    private final class DefaultMetricContext implements MetricContext {
+        private final MetricContext parent;
+        private final R recorderContext;
+
+        DefaultMetricContext(R recorderContext) {
+            this(null, recorderContext);
+        }
+
+        DefaultMetricContext(MetricContext parent, R recorderContext) {
+            this.parent = parent;
+            this.recorderContext = recorderContext;
+        }
+
+        @Override
+        public Optional<MetricContext> parent() {
+            return Optional.ofNullable(parent);
+        }
+
+        @Override
+        public MetricContext newChildContext(TypedMap additionalAttributes) {
+            R newContext = newRecorderContext(additionalAttributes);
+            return new DefaultMetricContext(this, newContext);
+        }
+
+        @Override
+        public TypedMap attributes() {
+            return merge(recorderContext.attributes());
+        }
+
+        // walk up the hierarchy until the root, then add entries to the map walking back down.
+        private TypedMap merge(TypedMap attributes) {
+            ImmutableTypedMap.Builder builder = ImmutableTypedMap.Builder.from(attributes);
+            Stack<TypedMap> parentAttributes = new Stack<>();
+            for (Optional<MetricContext> parent = Optional.ofNullable(this.parent);
+                    parent.isPresent();
+                    parent = parent.get().parent()) {
+                parentAttributes.push(parent.get().attributes());
+            }
+
+            while (!parentAttributes.empty()) {
+                for (TypedMap.Entry entry : parentAttributes.pop()) {
+                    builder.add(entry.getKey(), entry.getValue());
+                }
+            }
+
+            return builder.build();
+        }
+
+        @Override
+        public void record(Metric label, Number value, Unit unit, Instant time) {
+            MetricRecorder.this.record(label, value, unit, time, recorderContext);
+        }
+
+        @Override
+        public void count(Metric label, long delta) {
+            MetricRecorder.this.count(label, delta, recorderContext);
+        }
+
+        @Override
+        public void close() {
+            MetricRecorder.this.close(recorderContext);
+        }
     }
 }

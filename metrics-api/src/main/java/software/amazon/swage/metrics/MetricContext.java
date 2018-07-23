@@ -1,6 +1,7 @@
 package software.amazon.swage.metrics;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import software.amazon.swage.collection.TypedMap;
 
@@ -13,8 +14,31 @@ import software.amazon.swage.collection.TypedMap;
  * <p/>
  * A {MetricContext} is the primary interface used to record measurements.
  */
-// TODO: provide a childContext() mechanism?
 public interface MetricContext extends AutoCloseable {
+    /**
+     * Returns the parent of this context, if one exists.
+     *
+     * @return this Context's parent, if applicable. {@code Optional.empty} otherwise
+     */
+    Optional<MetricContext> parent();
+
+    /**
+     * Creates a new MetricContext with the supplied attributes and this instance as its parent
+     *
+     * @param additionalAttributes attributes specific to the new child context
+     * @return a new MetricContext with the supplied attributes and this instance as its parent
+     */
+    MetricContext newChildContext(TypedMap additionalAttributes);
+
+    /**
+     * Creates a new MetricContext with no additional attributes and this instance as its parent
+     *
+     * @return a new MetricContext with no additional attributes and this instance as its parent
+     */
+    default MetricContext newChildContext() {
+        return newChildContext(TypedMap.empty());
+    }
+
     /**
      * Returns the attributes and their values that identity the context in which measurements
      * are being taken.
