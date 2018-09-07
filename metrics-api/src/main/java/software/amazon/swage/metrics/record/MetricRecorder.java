@@ -15,6 +15,8 @@
 package software.amazon.swage.metrics.record;
 
 import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import software.amazon.swage.collection.TypedMap;
 import software.amazon.swage.metrics.Metric;
@@ -121,6 +123,8 @@ public abstract class MetricRecorder<R extends MetricRecorder.RecorderContext> {
     public MetricContext context(TypedMap attributes) {
         R context = newRecorderContext(attributes);
         return new MetricContext() {
+            private Map<Metric,Long> counts = new ConcurrentHashMap<>();
+
             @Override
             public TypedMap attributes() {
                 return context.attributes();
@@ -133,11 +137,14 @@ public abstract class MetricRecorder<R extends MetricRecorder.RecorderContext> {
 
             @Override
             public void count(Metric label, long delta) {
-                MetricRecorder.this.count(label, delta, context);
+                counts.compute(label, (x, before) -> (before == null) ? delta : before + delta);
             }
 
             @Override
             public void close() {
+                for (Map.Entry<Metric,Long> entry : counts.entrySet()) {
+                    MetricRecorder.this.count(entry.getKey(), entry.getValue(), context);
+                }
                 MetricRecorder.this.close(context);
             }
         };

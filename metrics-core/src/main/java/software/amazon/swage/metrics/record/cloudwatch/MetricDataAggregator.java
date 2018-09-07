@@ -23,6 +23,7 @@ import com.amazonaws.services.cloudwatch.model.StatisticSet;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -54,12 +55,12 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 class MetricDataAggregator {
 
-    private final ConcurrentHashMap<DatumKey, StatisticSet> statisticsMap;
+    private final ConcurrentHashMap<DatumKey, List<MetricDatum>> metricDataMap;
     private final DimensionMapper dimensionMapper;
 
     public MetricDataAggregator(final DimensionMapper dimensionMapper)
     {
-        this.statisticsMap = new ConcurrentHashMap<>();
+        this.metricDataMap = new ConcurrentHashMap<>();
         this.dimensionMapper = dimensionMapper;
     }
 
@@ -84,14 +85,11 @@ class MetricDataAggregator {
         List<Dimension> dimensions = dimensionMapper.getDimensions(name, context);
 
         DatumKey key = new DatumKey(name.toString(), unit, dimensions);
-        statisticsMap.merge(
-                key,
-                new StatisticSet()
-                        .withMaximum(value)
-                        .withMinimum(value)
-                        .withSampleCount(1D)
-                        .withSum(value),
-                MetricDataAggregator::sum);
+        List<MetricDatum> metricData = metricDataMap.computeIfAbsent(key, x -> new ArrayList<>());
+        metricData.add(key.getDatum()
+                .withValue(value)
+                .withTimestamp(Date.from(Instant.now()))
+        );
     }
 
     /**
@@ -108,7 +106,7 @@ class MetricDataAggregator {
      * @return list of all data aggregated since the last flush
      */
     public List<MetricDatum> flush() {
-        if (statisticsMap.size() == 0) {
+        if (metricDataMap.size() == 0) {
             return Collections.emptyList();
         }
 
@@ -119,31 +117,15 @@ class MetricDataAggregator {
         // be added during this iteration, or data for keys modified between
         // a key being chosen for iteration and being removed from the map.
         // This is ok.  Any new keys will be picked up on subsequent flushes.
-        //TODO: use two maps and swap between, to ensure 'perfect' segmentation?
         List<MetricDatum> metricData = new ArrayList<>();
-        for (DatumKey key : statisticsMap.keySet()) {
-            StatisticSet value = statisticsMap.remove(key);
-            //TODO: better to have no timestamp at all?
-            MetricDatum metricDatum = key.getDatum().withTimestamp(Date.from(Instant.now()))
-                                                    .withStatisticValues(value);
-            metricData.add(metricDatum);
+        for (DatumKey key : metricDataMap.keySet()) {
+            List<MetricDatum> value = metricDataMap.remove(key);
+            metricData.addAll(value);
         }
 
         return metricData;
     }
 
-
-    private static StatisticSet sum( StatisticSet v1, StatisticSet v2 ) {
-        //TODO: reuse one of the passed sets, and pollute a MetricDatum?
-        StatisticSet stats = new StatisticSet();
-
-        stats.setMaximum(Math.max(v1.getMaximum(), v2.getMaximum()));
-        stats.setMinimum(Math.min(v1.getMinimum(), v2.getMinimum()));
-        stats.setSampleCount(v1.getSampleCount() + v2.getSampleCount());
-        stats.setSum(v1.getSum() + v2.getSum());
-
-        return stats;
-    }
 
     /**
      * A wrapper for MetricDatum instances to use as a key in our aggregating map.
