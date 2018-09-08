@@ -137,14 +137,12 @@ public abstract class MetricRecorder<R extends MetricRecorder.RecorderContext> {
 
             @Override
             public void count(Metric label, long delta) {
-                counts.compute(label, (x, before) -> (before == null) ? delta : before + delta);
+                counts.compute(label, (x, previous) -> (previous == null) ? delta : previous + delta);
             }
 
             @Override
             public void close() {
-                for (Map.Entry<Metric,Long> entry : counts.entrySet()) {
-                    MetricRecorder.this.count(entry.getKey(), entry.getValue(), context);
-                }
+                counts.forEach((key, value) -> MetricRecorder.this.count(key, value, context));
                 MetricRecorder.this.close(context);
             }
         };
